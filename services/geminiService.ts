@@ -8,20 +8,21 @@ export const callMSRAgent = async (input: string) => {
   try {
     const response = await ai.models.generateContent({
       model: 'gemini-3-pro-preview',
-      contents: `[ANALYSE MSR V2]
+      contents: `[AUDIT FORENSIC ULTRA-DÉTAILLÉ ACTIVÉ]
 SUJET : ${input}
 
-INSTRUCTIONS :
-- Génère le DOC PROD, le SCRIPT PODCAST et l'AUTOPSIE RRLA.
-- Le script doit être immersif mais concis pour tenir dans le flux JSON.
-- FERME TOUTES LES GUILLEMETS ET LES ACCOLADES.`,
+MISSION : 
+- Réaliser un audit à 360° du sujet. 
+- Ne pas économiser sur les détails techniques (chiffres, mécanismes de pouvoir).
+- Remplir chaque section du JSON avec une densité d'information maximale.
+- FERME TOUTES LES STRUCTURES JSON (", }, ]).`,
       config: {
         systemInstruction: SYSTEM_PROMPT,
         responseMimeType: "application/json",
         responseSchema: RESPONSE_SCHEMA as any,
         temperature: 0.7,
         maxOutputTokens: 8192,
-        thinkingConfig: { thinkingBudget: 2048 },
+        thinkingConfig: { thinkingBudget: 4096 }, // Budget élevé pour une réflexion approfondie avant rédaction
         tools: [{ googleSearch: {} }] 
       }
     });
@@ -29,52 +30,74 @@ INSTRUCTIONS :
     let text = response.text || "";
     text = text.trim();
     
-    // Tentative de réparation si le JSON est mal formé ou tronqué
-    try {
-      return JSON.parse(text);
-    } catch (parseError) {
-      console.warn("Premier échec de parsing, tentative de réparation...", parseError);
+    // NETTOYEUR ET RÉPARATEUR JSON ROBUSTE
+    const repairJSON = (str: string) => {
+      let repaired = str;
       
-      // Si la chaîne n'est pas fermée
-      if (text.lastIndexOf('"') > text.lastIndexOf(':') && !text.endsWith('"')) {
-          text += '"';
+      // 1. Détection de la dernière coupure
+      // Si on finit par une virgule ou au milieu d'un champ
+      const lastOpenBrace = repaired.lastIndexOf('{');
+      const lastCloseBrace = repaired.lastIndexOf('}');
+      
+      if (lastOpenBrace > lastCloseBrace) {
+          // On est dans un objet non fermé.
+          // Si on est au milieu d'une chaîne de caractères (nombre impair de guillemets après la dernière accolade)
+          const contentAfterLastBrace = repaired.substring(lastOpenBrace);
+          const quoteCount = (contentAfterLastBrace.match(/"/g) || []).length;
+          if (quoteCount % 2 !== 0) {
+              repaired += '"'; // Ferme la chaîne
+          }
       }
-      
-      // Fermeture brutale des structures
-      let openBraces = (text.match(/\{/g) || []).length;
-      let closeBraces = (text.match(/\}/g) || []).length;
+
+      // 2. Équilibrage des accolades et crochets
+      let openBraces = (repaired.match(/\{/g) || []).length;
+      let closeBraces = (repaired.match(/\}/g) || []).length;
       while (openBraces > closeBraces) {
-          text += '}';
+          repaired += '}';
           closeBraces++;
       }
       
-      let openBrackets = (text.match(/\[/g) || []).length;
-      let closeBrackets = (text.match(/\]/g) || []).length;
+      let openBrackets = (repaired.match(/\[/g) || []).length;
+      let closeBrackets = (repaired.match(/\]/g) || []).length;
       while (openBrackets > closeBrackets) {
-          text += ']';
+          repaired += ']';
           closeBrackets++;
       }
 
-      const parsed = JSON.parse(text);
-      
-      // Extraction des sources si dispo
-      const groundingChunks = response.candidates?.[0]?.groundingMetadata?.groundingChunks;
-      const sources = groundingChunks?.map((chunk: any) => ({
-        title: chunk.web?.title || 'Source Vérifiée',
-        uri: chunk.web?.uri
-      })).filter((s: any) => s.uri) || [];
+      return repaired;
+    };
 
-      if (parsed.artifacts) {
-        parsed.artifacts = parsed.artifacts.map((a: any, i: number) => ({
-          ...a,
-          id: a.id || `msr-${Date.now()}-${i}`,
-          groundingSources: sources 
-        }));
+    try {
+      // Tentative initiale
+      return JSON.parse(text);
+    } catch (e) {
+      console.warn("Échec parsing initial, tentative de réparation du flux...");
+      const repaired = repairJSON(text);
+      try {
+        const parsed = JSON.parse(repaired);
+        
+        // Enrichissement avec sources si dispo
+        const groundingChunks = response.candidates?.[0]?.groundingMetadata?.groundingChunks;
+        const sources = groundingChunks?.map((chunk: any) => ({
+          title: chunk.web?.title || 'Source Auditée',
+          uri: chunk.web?.uri
+        })).filter((s: any) => s.uri) || [];
+
+        if (parsed.artifacts) {
+          parsed.artifacts = parsed.artifacts.map((a: any, i: number) => ({
+            ...a,
+            id: a.id || `msr-${Date.now()}-${i}`,
+            groundingSources: sources 
+          }));
+        }
+        return parsed;
+      } catch (e2) {
+        console.error("Échec critique de réparation JSON:", repaired);
+        throw new Error("Le réel est trop dense pour être encapsulé. Essayez de restreindre l'angle d'audit.");
       }
-      return parsed;
     }
   } catch (error: any) {
     console.error("MSR Kernel Failure:", error);
-    throw new Error(error.message || "Le réel a brisé le flux. Relancez l'autopsie.");
+    throw error;
   }
 };
